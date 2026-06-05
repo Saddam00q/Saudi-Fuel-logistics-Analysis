@@ -1,0 +1,131 @@
+-- 1. تفعيل العلاقات ومسح الجداول القديمة للبدء من جديد بنظافة
+PRAGMA foreign_keys = ON;
+DROP TABLE IF EXISTS Transport_Trips;
+DROP TABLE IF EXISTS Daily_Sales;
+DROP TABLE IF EXISTS Trucks;
+DROP TABLE IF EXISTS Fuel_Types;
+DROP TABLE IF EXISTS Stations;
+
+-- 2. إعادة إنشاء الجداول الأساسية
+CREATE TABLE Stations (Station_Code TEXT PRIMARY KEY, Station_Name TEXT NOT NULL);
+CREATE TABLE Fuel_Types (Fuel_ID INTEGER PRIMARY KEY, Fuel_Name TEXT NOT NULL, Price_Per_Liter REAL NOT NULL);
+CREATE TABLE Trucks (Truck_Plate TEXT PRIMARY KEY, Allowed_Fuel_Category TEXT NOT NULL);
+
+CREATE TABLE Daily_Sales (
+    Sales_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+    Date TEXT NOT NULL,
+    Day_Type TEXT NOT NULL,
+    Station_Code TEXT,
+    Fuel_ID INTEGER,
+    Quantity_Sold_Liters REAL NOT NULL,
+    Total_Revenue REAL NOT NULL,
+    FOREIGN KEY (Station_Code) REFERENCES Stations(Station_Code),
+    FOREIGN KEY (Fuel_ID) REFERENCES Fuel_Types(Fuel_ID)
+);
+
+CREATE TABLE Transport_Trips (
+    Trip_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+    Date TEXT NOT NULL,
+    Truck_Plate TEXT,
+    Station_Code TEXT,
+    Fuel_ID INTEGER,
+    Quantity_Delivered_Liters REAL NOT NULL DEFAULT 32000.0, -- السعة ثابتة تماماً بناءً على شرطك
+    FOREIGN KEY (Truck_Plate) REFERENCES Trucks(Truck_Plate),
+    FOREIGN KEY (Station_Code) REFERENCES Stations(Station_Code),
+    FOREIGN KEY (Fuel_ID) REFERENCES Fuel_Types(Fuel_ID)
+);
+
+-- 3. ضخ البيانات الثابتة (المحطات الـ 4 + الشاحنات الـ 3)
+INSERT INTO Stations VALUES 
+('st-001', 'محطة طريق الرياض'),
+('st-002', 'محطة طريق بيشة'),
+('st-003', 'محطة طريق أبها'),
+('st-004', 'محطة وسط المدينة (المتوسطة)');
+
+INSERT INTO Fuel_Types VALUES (1, 'بنزين 91', 2.18), (2, 'بنزين 95', 2.33), (3, 'ديزل', 1.79);
+INSERT INTO Trucks VALUES ('أ س س ٢٥٠', 'بنزين'), ('أ س س ٣٣٠', 'بنزين'), ('أ س س ٦٦٠', 'ديزل');
+
+-- 4. السحر البرمجي: توليد آلاف الصفوف لسنتين ونصف (من 2024-01-01 إلى 2026-06-05)
+WITH RECURSIVE DateCalendar(GenDate) AS (
+    SELECT '2024-01-01'
+    UNION ALL
+    SELECT date(GenDate, '+1 day') FROM DateCalendar WHERE GenDate < '2026-06-05'
+),
+-- تحديد نوع اليوم تشغيلياً (عيد، جمعة، أمطار، يوم عادي) لتطبيق شروطك الموسميّة
+DateRules AS (
+    SELECT 
+        GenDate AS Date,
+        CASE 
+            -- محاكاة تقريبية لأيام الأعياد الرسمية في سنتين ونصف
+            WHEN strftime('%m-%d', GenDate) IN ('04-10', '04-11', '04-12', '06-16', '06-17', '06-18') THEN 'عيد'
+            -- تحديد أيام الجمعة
+            WHEN strftime('%w', GenDate) = '5' THEN 'جمعة'
+            -- محاكاة أيام أمطار استثنائية في أبها (مثلاً في أشهر معينة)
+            WHEN strftime('%m-%d', GenDate) IN ('03-15', '11-20', '04-05') THEN 'أمطار'
+            ELSE 'يوم عادي'
+        END AS Day_Type
+    FROM DateCalendar
+)
+-- ضخ المبيعات المحسوبة ديناميكياً لكل محطة وكل صنف بناءً على نوع اليوم والشروط التي حددتها
+INSERT INTO Daily_Sales (Date, Day_Type, Station_Code, Fuel_ID, Quantity_Sold_Liters, Total_Revenue)
+SELECT 
+    R.Date,
+    R.Day_Type,
+    S.Station_Code,
+    F.Fuel_ID,
+    -- تحديد الكميات بناءً على شروطك الدقيقة لكل محطة وكل نوع يوم
+    ROUND(CASE S.Station_Code
+        -- [شروط محطة الرياض st-001]
+        WHEN 'st-001' THEN 
+            CASE F.Fuel_ID
+                WHEN 1 THEN CASE WHEN R.Day_Type = 'عيد' THEN 13000.0 ELSE 6000.0 + (abs(random() % 3001)) END -- 91: 6k-9k أو 13k في العيد
+                WHEN 2 THEN CASE WHEN R.Day_Type IN ('عيد', 'جمعة') THEN 7000.0 ELSE 3000.0 + (abs(random() % 2001)) END -- 95: 3k-5k أو 7k في العيد والعطل
+                WHEN 3 THEN CASE WHEN R.Day_Type = 'جمعة' THEN 9000.0 WHEN R.Day_Type = 'عيد' THEN 6000.0 ELSE 10000.0 + (abs(random() % 7001)) END -- ديزل: 10k-17k، الجمعة 9k، العيد 6k
+            END
+        -- [شروط محطة بيشة st-002]
+        WHEN 'st-002' THEN 
+            CASE F.Fuel_ID
+                WHEN 1 THEN CASE WHEN R.Day_Type IN ('عيد', 'جمعة') THEN 10000.0 ELSE 5000.0 + (abs(random() % 3001)) END -- 91: 5k-8k أو 10k في العطل
+                WHEN 2 THEN CASE WHEN R.Day_Type IN ('عيد', 'جمعة') THEN 6500.0 ELSE 3000.0 + (abs(random() % 2001)) END  -- 95: 3k-5k أو 6.5k في العطل
+                WHEN 3 THEN CASE WHEN R.Day_Type = 'عيد' THEN 10000.0 ELSE 25000.0 + (abs(random() % 7001)) END -- ديزل: 25k-32k وفي العيد يهبط لـ 10k
+            END
+        -- [شروط محطة أبها st-003]
+        WHEN 'st-003' THEN 
+            CASE F.Fuel_ID
+                WHEN 1 THEN CASE WHEN R.Day_Type = 'أمطار' THEN 25000.0 WHEN R.Day_Type IN ('عيد', 'جمعة') THEN 17000.0 ELSE 6000.0 + (abs(random() % 4001)) END -- 91 قفزة المطر 25k والعيد 17k
+                WHEN 2 THEN CASE WHEN R.Day_Type IN ('عيد', 'جمعة') THEN 10000.0 ELSE 3000.0 + (abs(random() % 4001)) END -- 95: 3k-7k والعيد 10k
+                WHEN 3 THEN CASE WHEN R.Day_Type = 'عيد' THEN 2500.0 ELSE 4000.0 + (abs(random() % 2501)) END -- ديزل وتيرة ثابتة 4k-6.5k
+            END
+        -- [شروط محطة وسط المدينة st-004 المضافة من عندي بناءً على طلبك - 91 ضعف 95 والديزل قليل]
+        WHEN 'st-004' THEN 
+            CASE F.Fuel_ID
+                WHEN 1 THEN 8000.0 + (abs(random() % 4001))   -- بنزين 91 حوالي 8k إلى 12k
+                WHEN 2 THEN 4000.0 + (abs(random() % 2001))   -- بنزين 95 حوالي 4k إلى 6k (نصف كمية الـ 91)
+                WHEN 3 THEN 1000.0 + (abs(random() % 1501))   -- ديزل منخفض جداً داخل المدينة 1k إلى 2.5k
+            END
+    END, 2) AS Quantity_Sold_Liters,
+    0.0 AS Total_Revenue -- سنحسبها في الخطوة التالية بدقة عبر الضرب في السعر الثابت
+FROM DateRules R
+CROSS JOIN Stations S
+CROSS JOIN Fuel_Types F;
+
+-- 5. تحديث عمود الإيرادات بناءً على الأسعار الرسمية التي حددتها بدقة لكل لتر
+UPDATE Daily_Sales 
+SET Total_Revenue = ROUND(Quantity_Sold_Liters * (SELECT Price_Per_Liter FROM Fuel_Types WHERE Fuel_Types.Fuel_ID = Daily_Sales.Fuel_ID), 2);
+
+-- 6. محاكاة ذكية لرحلات النقل: شحنة بقيمة 32000 لتر ثابتة تخرج للمحطات كلما تراكمت مبيعاتها ووصلت لـ 32000 لتر
+INSERT INTO Transport_Trips (Date, Truck_Plate, Station_Code, Fuel_ID, Quantity_Delivered_Liters)
+SELECT 
+    Date,
+    CASE WHEN Fuel_ID = 3 THEN 'أ س س ٦٦٠'  -- سيارة الديزل فقط
+         WHEN random() % 2 = 0 THEN 'أ س س ٢٥٠' -- توزيع البنزين عشوائياً بين الشاحنتين
+         ELSE 'أ س س ٣٣٠' 
+    END AS Truck_Plate,
+    Station_Code,
+    Fuel_ID,
+    32000.0 -- كمية ثابتة لكل رحلة بناءً على شرطك الصارم
+FROM (
+    SELECT Date, Station_Code, Fuel_ID,
+           SUM(Quantity_Sold_Liters) OVER (PARTITION BY Station_Code, Fuel_ID ORDER BY Date) AS Cumulative_Sales
+    FROM Daily_Sales
+) WHERE CAST(Cumulative_Sales AS INT) % 32000 < 10000; -- محاكاة خروج الشاحنة لتلبية السحب كل فترة
